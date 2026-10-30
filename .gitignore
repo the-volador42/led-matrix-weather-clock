@@ -1,0 +1,16 @@
+# Пароли и ключи — не попадают в историю и в архивы
+led_matrix_weather_clock/secrets.h
+
+# Инструменты сборки (arduino-cli, ядро ESP8266, библиотеки)
+.tools/
+
+# Промежуточные файлы симулятора
+simulator/sim.wasm
+simulator/tools/*.wasm
+
+# Собранные тесты
+tests/*.exe
+tests/*.pdb
+
+# Настройки Claude
+.claude/

@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Симулятор LED-матрицы</title>
+<style>
+  :root {
+    --bg: #111215;
+    --panel: #1a1c21;
+    --panel-2: #22252b;
+    --line: #2e323a;
+    --text: #e8e9ec;
+    --muted: #9399a5;
+    --accent: #4fb3ff;
+    --accent-ink: #06121c;
+    --pcb: #050506;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .stage { background: var(--pcb); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  canvas#matrix { display: block; width: 100%; height: auto; image-rendering: pixelated; cursor: crosshair; }
+  .now { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; }
+  .now b { font-weight: 600; font-size: 15px; }
+  .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; color: var(--muted); }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0; }
+  button, select, input[type=text], input[type=datetime-local] {
+    font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 11px; min-height: 36px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: #49505c; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: var(--panel-2); min-width: 46px; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed=true] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; min-width: 0; }
+  .card h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 10px; }
+  .effects { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 6px; }
+  .effects button { text-align: left; display: flex; gap: 8px; align-items: center; padding: 7px 9px; }
+  .effects button .n { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 1.6em; }
+  .effects button[aria-pressed=true] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .effects button[aria-pressed=true] .n { color: var(--accent-ink); }
+  label.row { display: block; margin-bottom: 12px; }
+  label.row > span { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  label.row small { color: var(--muted); display: block; margin-top: 3px; font-size: 12px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .inline { display: flex; gap: 6px; }
+  .inline input { flex: 1; min-width: 0; }
+  .check { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
+  .check input { margin-top: 3px; accent-color: var(--accent); }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; color: var(--muted); }
+  pre#log { max-height: 180px; overflow: auto; background: var(--pcb); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0 0; white-space: pre-wrap; }
+  .keys { color: var(--muted); font-size: 12px; margin-top: 12px; }
+  kbd { font: 11px ui-monospace, Consolas, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--panel-2); }
+  .power { margin-top: 6px; font-size: 13px; color: var(--muted); }
+  .power b { color: var(--text); font-weight: 600; }
+  .power.over b { color: #ffb454; }
+  .err { background: #3a1517; border: 1px solid #7a2a2f; color: #ffd5d7; padding: 12px; border-radius: 8px; display: none; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Симулятор LED-матрицы 32×8</h1>
+    <span class="sub">Работает настоящий код эффектов из прошивки, собранный для браузера</span>
+  </header>
+
+  <div class="err" id="err"></div>
+
+  <div class="stage">
+    <canvas id="matrix" width="1280" height="320" aria-label="Матрица светодиодов"></canvas>
+    <div class="now">
+      <span><b id="effName">—</b></span>
+      <span class="mono" id="status">кадр 0 · 0.0 с</span>
+    </div>
+    <div class="power" id="power">—</div>
+    <div class="mono" id="hover">Наведи на светодиод: координаты, номер в ленте и цвет</div>
+  </div>
+
+  <div class="bar">
+    <button class="primary" id="play" title="Пробел">⏸ Пауза</button>
+    <button id="step" title="Клавиша .">Шаг ▸</button>
+    <button id="restart" title="Клавиша R">⟲ Перезапустить</button>
+    <span class="seg" id="speed" role="group" aria-label="Скорость">
+      <button data-s="0.25">×¼</button><button data-s="1" aria-pressed="true">×1</button><button data-s="4">×4</button><button data-s="16">×16</button>
+    </span>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Эффекты</h2>
+      <div class="effects" id="effects"></div>
+      <div class="keys"><kbd>←</kbd> <kbd>→</kbd> предыдущий / следующий · <kbd>Пробел</kbd> пауза · <kbd>.</kbd> один кадр · <kbd>R</kbd> перезапуск</div>
+    </section>
+
+    <section class="card">
+      <h2>Условия</h2>
+      <label class="row"><span>Ветер <span class="mono" id="windVal">8 м/с</span></span>
+        <input type="range" id="wind" min="0" max="20" step="0.5" value="8">
+        <small>Влияет на эффект «Ветер (дерево)»</small>
+      </label>
+      <label class="row"><span>Сезон</span>
+        <select id="season">
+          <option value="0">Весна</option><option value="1" selected>Лето</option>
+          <option value="2">Осень</option><option value="3">Зима</option>
+        </select>
+        <small>Пока в коде все сезоны зелёные (заглушка в getLeafColor)</small>
+      </label>
+      <label class="row"><span>Бегущая строка</span>
+        <span class="inline"><input type="text" id="text" value="ПРИВЕТ" maxlength="120"><button id="textApply">OK</button></span>
+        <small>Русские и латинские буквы (строчные — заглавными), цифры и знаки . , : - ! ? + / % ( ) ' " = °</small>
+      </label>
+      <label class="row"><span>Дата и время</span>
+        <span class="inline"><input type="datetime-local" id="dt" step="1"><button id="dtNow">Сейчас</button></span>
+        <small>Для часов и фазы Луны</small>
+      </label>
+      <h2 style="margin-top:16px">Показ</h2>
+      <label class="check"><input type="checkbox" id="gamma" checked><span>Как видит глаз<br><small class="sub">Тёмные цвета ярче, как у светодиодов вживую</small></span></label>
+      <label class="row"><span>Яркость часов <span class="mono" id="brVal">—</span></span>
+        <input type="range" id="bright" min="1" max="255" step="1" value="180">
+        <small>Для расчёта тока. Будильник поднимает яркость до 180</small>
+      </label>
+      <label class="check"><input type="checkbox" id="useBright"><span>Показывать с этой яркостью<br><small class="sub">И с приглушением из-за лимита тока, как на часах</small></span></label>
+      <label class="check"><input type="checkbox" id="glow" checked><span>Свечение</span></label>
+    </section>
+  </div>
+
+  <details>
+    <summary>Serial Monitor (вывод скетча)</summary>
+    <pre class="mono" id="log"></pre>
+  </details>
+</div>
+
+<script>
+const WASM_BASE64 = "__WASM_BASE64__";
+const FRAME_MS = 40;                     // FRAME_DELAY из скетча
+const $ = id => document.getElementById(id);
+
+const state = { playing: true, speed: 1, frame: 0, ms: 0, acc: 0, last: 0, effect: 0, baseUnix: 0, pixels: null };
+let ex, mem, W = 32, H = 8;
+
+function logLine(s) { const el = $('log'); el.textContent += s + '\n'; el.scrollTop = el.scrollHeight; }
+function cstr(p) { const b = new Uint8Array(mem.buffer); let e = p; while (b[e]) e++; return new TextDecoder().decode(b.subarray(p, e)); }
+
+async function load() {
+  const bytes = Uint8Array.from(atob(WASM_BASE64), c => c.charCodeAt(0));
+  const imports = {
+    env: { sim_log: p => logLine(cstr(p)) },
+    wasi_snapshot_preview1: {
+      fd_write: (fd, iov, n, out) => { const v = new DataView(mem.buffer); let t = 0; for (let i = 0; i < n; i++) t += v.getUint32(iov + i * 8 + 4, true); v.setUint32(out, t, true); return 0; },
+      fd_close: () => 0, fd_seek: () => 0,
+    },
+  };
+  const { instance } = await WebAssembly.instantiate(bytes, imports);
+  ex = instance.exports; mem = ex.memory;
+  ex._initialize && ex._initialize();
+}
+
+// Время: передаём «местные часы» как есть — в симуляторе localtime() = UTC.
+function wallToUnix(d) { return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()) / 1000); }
+function setDateInput(d) { const p = n => String(n).padStart(2, '0'); $('dt').value = `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
+// millis() на часах никогда не сбрасывается — и здесь тоже (state.ms общий для всех эффектов).
+function simUnix() { return state.baseUnix + Math.floor(state.ms / 1000); }
+
+function stepFrame() {
+  state.frame++; state.ms += FRAME_MS;
+  state.pixels = new Uint8Array(mem.buffer, ex.sim_frame(state.ms, simUnix()), W * H * 3);
+}
+
+function selectEffect(i) {
+  const n = ex.sim_effect_count();
+  state.effect = (i + n) % n;
+  ex.sim_select(state.effect);
+  state.frame = 0; state.acc = 0;
+  stepFrame();
+  document.querySelectorAll('#effects button').forEach((b, k) => b.setAttribute('aria-pressed', k === state.effect));
+  $('effName').textContent = `${state.effect + 1}. ${cstr(ex.sim_effect_name(state.effect))}`;
+  draw();
+}
+
+// ---- Отрисовка ----
+const cv = $('matrix'), ctx = cv.getContext('2d');
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(w / W * H * dpr);
+  draw();
+}
+const gammaLUT = new Uint8Array(256).map((_, v) => Math.round(255 * Math.pow(v / 255, 1 / 2.2)));
+// Ток по модели FastLED 3.10: 16/11/15 мА на канал (при 255), 1 мА на светодиод, 25 мА контроллер.
+function powerInfo(px, brightness) {
+  let r = 0, g = 0, b = 0;
+  for (let i = 0; i < px.length; i += 3) { r += px[i]; g += px[i + 1]; b += px[i + 2]; }
+  const n = px.length / 3;
+  const controllable = ((r * 80) >> 8) + ((g * 55) >> 8) + ((b * 75) >> 8);   // мВт при яркости 255
+  const fixed = 5 * n + 125;
+  const want = controllable * brightness / 256 + fixed;
+  const limit = ex.sim_max_milliamps() * ex.sim_volts();
+  let effective = brightness;
+  if (want > limit && controllable > 0) effective = Math.max(0, Math.floor((limit - fixed) * 256 / controllable));
+  return { mA: want / ex.sim_volts(), limitMA: ex.sim_max_milliamps(), effective: Math.min(effective, brightness) };
+}
+
+function draw() {
+  if (!state.pixels) return;
+  const cell = cv.width / W, r = cell * 0.36;
+  const useGamma = $('gamma').checked, glow = $('glow').checked;
+  const B = Number($('bright').value);
+  const pw = powerInfo(state.pixels, B);
+  const br = $('useBright').checked ? pw.effective / 255 : 1;
+  ctx.fillStyle = '#050506'; ctx.fillRect(0, 0, cv.width, cv.height);
+  const px = state.pixels;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const s = (y * W + x) * 3;
+    let R = px[s] * br, G = px[s + 1] * br, B = px[s + 2] * br;
+    if (useGamma) { R = gammaLUT[R | 0]; G = gammaLUT[G | 0]; B = gammaLUT[B | 0]; }
+    const cx = (x + 0.5) * cell, cy = (y + 0.5) * cell;
+    const lit = R + G + B > 6;
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(cx - r, cy - r, r * 2, r * 2, r * 0.35) : ctx.rect(cx - r, cy - r, r * 2, r * 2);
+    if (lit) {
+      const c = `rgb(${R | 0},${G | 0},${B | 0})`;
+      ctx.fillStyle = c;
+      if (glow) { ctx.shadowColor = c; ctx.shadowBlur = cell * 0.55; }
+    } else { ctx.fillStyle = '#16171b'; ctx.shadowBlur = 0; }
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+  $('status').textContent = `кадр ${state.frame} · ${(state.frame * FRAME_MS / 1000).toFixed(1)} с · ${new Date(simUnix() * 1000).toISOString().slice(11, 19)}`;
+  $('brVal').textContent = B;
+  const A = x => (x / 1000).toFixed(1).replace('.', ',') + ' А';
+  const over = pw.mA > pw.limitMA;
+  $('power').className = 'power' + (over ? ' over' : '');
+  $('power').innerHTML = `Ток при яркости ${B}: <b>${A(pw.mA)}</b> · лимит ${A(pw.limitMA)}` +
+    (over ? ` · <b>FastLED приглушит до ${Math.round(pw.effective / B * 100)}%</b>` : ' · в пределах');
+}
+
+function tick(t) {
+  if (state.playing) {
+    state.acc += Math.min(t - state.last, 250) * state.speed;
+    let n = 0;
+    while (state.acc >= FRAME_MS && n < 400) { stepFrame(); state.acc -= FRAME_MS; n++; }
+    if (n) draw();
+  }
+  state.last = t;
+  requestAnimationFrame(tick);
+}
+
+function setPlaying(p) { state.playing = p; $('play').textContent = p ? '⏸ Пауза' : '▶ Пуск'; }
+
+// ---- Подсказка при наведении ----
+cv.addEventListener('mousemove', e => {
+  if (!state.pixels) return;
+  const rect = cv.getBoundingClientRect();
+  const x = Math.floor((e.clientX - rect.left) / rect.width * W), y = Math.floor((e.clientY - rect.top) / rect.height * H);
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  const s = (y * W + x) * 3, p = state.pixels;
+  $('hover').textContent = `x=${x} y=${y} · светодиод №${ex.sim_xy(x, y)} в ленте · CRGB(${p[s]}, ${p[s + 1]}, ${p[s + 2]})`;
+});
+
+async function main() {
+  try { await load(); } catch (e) { $('err').style.display = 'block'; $('err').textContent = 'Не удалось запустить симулятор: ' + e; return; }
+  W = ex.sim_width(); H = ex.sim_height();
+  const now = new Date(); setDateInput(now); state.baseUnix = wallToUnix(now);
+  ex.sim_init((Math.random() * 1e9) >>> 0, state.baseUnix);
+
+  const list = $('effects');
+  for (let i = 0; i < ex.sim_effect_count(); i++) {
+    const b = document.createElement('button');
+    b.innerHTML = `<span class="n">${i + 1}</span><span></span>`;
+    b.lastChild.textContent = cstr(ex.sim_effect_name(i));
+    b.onclick = () => selectEffect(i);
+    list.appendChild(b);
+  }
+
+  $('play').onclick = () => setPlaying(!state.playing);
+  $('step').onclick = () => { setPlaying(false); stepFrame(); draw(); };
+  $('restart').onclick = () => selectEffect(state.effect);
+  document.querySelectorAll('#speed button').forEach(b => b.onclick = () => {
+    state.speed = Number(b.dataset.s);
+    document.querySelectorAll('#speed button').forEach(o => o.setAttribute('aria-pressed', o === b));
+  });
+  $('wind').oninput = e => { ex.sim_set_wind(Number(e.target.value)); $('windVal').textContent = e.target.value + ' м/с'; };
+  ex.sim_set_wind(Number($('wind').value));
+  $('season').onchange = e => ex.sim_set_season(Number(e.target.value));
+  const applyText = () => {
+    const bytes = new TextEncoder().encode($('text').value);
+    const size = ex.sim_text_buffer_size(), buf = new Uint8Array(mem.buffer, ex.sim_text_buffer(), size);
+    buf.fill(0); buf.set(bytes.subarray(0, size - 1)); ex.sim_apply_text();
+  };
+  $('textApply').onclick = applyText;
+  $('text').onkeydown = e => { if (e.key === 'Enter') applyText(); e.stopPropagation(); };
+  $('dt').onchange = e => { const d = new Date(e.target.value); if (!isNaN(d)) { state.baseUnix = wallToUnix(d) - Math.floor(state.ms / 1000); draw(); } };
+  $('dtNow').onclick = () => { const d = new Date(); setDateInput(d); state.baseUnix = wallToUnix(d) - Math.floor(state.ms / 1000); };
+  ['gamma', 'useBright', 'glow'].forEach(id => $(id).onchange = draw);
+  $('bright').value = ex.sim_brightness();
+  $('bright').oninput = draw;
+
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'checkbox') return;
+    if (e.key === 'ArrowRight') selectEffect(state.effect + 1);
+    else if (e.key === 'ArrowLeft') selectEffect(state.effect - 1);
+    else if (e.key === ' ') { e.preventDefault(); setPlaying(!state.playing); }
+    else if (e.key === '.') { setPlaying(false); stepFrame(); draw(); }
+    else if (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К') selectEffect(state.effect);
+  });
+
+  new ResizeObserver(resize).observe(cv);
+  selectEffect(0);
+  requestAnimationFrame(t => { state.last = t; tick(t); });
+}
+main();
+</script>
+</body>
+</html>
